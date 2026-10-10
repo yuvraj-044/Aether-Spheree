@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aether Sphere — Real-Time 3D Hand Interaction</title>
+    <!-- Google Fonts: Elegant Serif & Minimal Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+
+    <style>
+        :root {
+            --bg-deep: #050508;
+            --accent-glow: #00f0ff;
+            --text-primary: #f8fafc;
+            --text-muted: rgba(248, 250, 252, 0.6);
+            --font-serif: 'Playfair Display', 'Cinzel', Georgia, serif;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --glass-bg: rgba(13, 15, 24, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-deep);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            position: relative;
+        }
+
+        /* 3D Canvas Layer */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: auto;
+            touch-action: none;
+        }
+
+        /* Webcam Background Layer */
+        #video-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            opacity: 0;
+            transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        #video-container.active {
+            opacity: 0.35;
+            z-index: 2;
+        }
+
+        #video-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            filter: contrast(1.15) brightness(0.9) saturate(1.2);
+        }
+
+        #video-overlay-gradient {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, transparent 30%, rgba(5, 5, 8, 0.8) 100%);
+            pointer-events: none;
+        }
+
+        /* Top Left Branding */
+        #header-ui {
+            position: absolute;
+            top: 36px;
+            left: 40px;
+            z-index: 20;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .title-serif {
+            font-family: var(--font-serif);
+            font-size: 28px;
+            font-weight: 600;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-shadow: 0 0 24px rgba(255, 255, 255, 0.2);
+        }
+
+        .title-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--accent-glow);
+            box-shadow: 0 0 10px var(--accent-glow);
+            animation: pulse-dot 2.5s infinite ease-in-out;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 0.4; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.3); }
+        }
+
+        .subtitle {
+            font-size: 11px;
+            font-weight: 400;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-family: var(--font-sans);
+        }
+
+        /* Realtime Status HUD (Top Right) */
+        #status-hud {
+            position: absolute;
+            top: 36px;
+            right: 40px;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            pointer-events: auto;
+        }
+
+        .hud-pill {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 8px 16px;
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+            transition: all 0.3s ease;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            transition: background-color 0.4s ease, box-shadow 0.4s ease;
+        }
+
+        .status-indicator.ready {
+            background: #10b981;
+            box-shadow: 0 0 8px #10b981;
+        }
+
+        .status-indicator.tracking {
+            background: #00f0ff;
+            box-shadow: 0 0 10px #00f0ff;
+        }
+
+        /* Interactive Pinch Energy Charge Ring */
+        #charge-ring-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 140px;
+            height: 140px;
+            z-index: 15;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.1s linear;
+            filter: drop-shadow(0 0 14px rgba(0, 240, 255, 0.5));
+        }
+
+        .charge-svg {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+
+        .charge-track {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.08);
+            stroke-width: 4;
+        }
+
+        .charge-bar {
+            fill: none;
+            stroke: var(--accent-glow);
+            stroke-width: 5;
+            stroke-linecap: round;
+            stroke-dasharray: 377; /* 2 * PI * 60 */
+            stroke-dashoffset: 377;
+            transition: stroke-dashoffset 0.06s linear, stroke 0.3s ease;
+        }
+
+        .charge-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: var(--font-sans);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            color: #ffffff;
+            text-transform: uppercase;
+        }
+
+        /* Gestures Guide & Information Drawer */
+        #guide-panel {
+            position: absolute;
+            bottom: 36px;
+            left: 40px;
+            z-index: 20;
+            max-width: 380px;
+            pointer-events: auto;
+        }
+
+        .guide-box {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 16px;
+            padding: 18px 22px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .guide-box.collapsed .guide-list {
+            display: none;
+        }
+
+        .guide-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+
+        .guide-header h3 {
+            font-family: var(--font-serif);
+            font-size: 15px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .guide-toggle-icon {
+            font-size: 12px;
+            color: var(--text-muted);
+            transition: transform 0.3s ease;
+        }
+
+        .guide-box.collapsed .guide-toggle-icon {
+            transform: rotate(-90deg);
+        }
+
+        .guide-list {
+            margin-top: 14px;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 9px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .guide-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            line-height: 1.4;
+        }
+
+        .guide-badge {
+            font-family: var(--font-serif);
+            font-size: 10px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 7px;
+            border-radius: 6px;
+            white-space: nowrap;
+            letter-spacing: 0.5px;
+        }
+
+        /* Controls Floating Panel (Bottom Right) */
+        #controls-panel {
+            position: absolute;
+            bottom: 36px;
+            right: 40px;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            pointer-events: auto;
+        }
+
+        .luxury-btn {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            color: #ffffff;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 12px 22px;
+            border-radius: 30px;
+            font-family: var(--font-serif);
+            font-size: 12px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .luxury-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 36px rgba(0, 240, 255, 0.2);
+        }
+
+        .luxury-btn.active {
+            background: rgba(0, 240, 255, 0.2);
+            border-color: var(--accent-glow);
+            color: #ffffff;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.35);
+        }
+
+        .luxury-btn svg {
+            width: 15px;
+            height: 15px;
+            fill: currentColor;
+        }
+
+        /* Camera loading / Error Toast */
+        #notification-toast {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            background: rgba(20, 22, 34, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(20px);
+            padding: 12px 24px;
+            border-radius: 24px;
+            font-size: 13px;
+            color: #fff;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            text-align: center;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        #notification-toast.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* Responsive Media Queries */
+        @media (max-width: 768px) {
+            #header-ui {
+                top: 20px;
+                left: 20px;
+            }
+            .title-serif {
+                font-size: 20px;
+                letter-spacing: 2px;
+            }
+            #status-hud {
+                top: 20px;
+                right: 20px;
+                flex-direction: column;
+                align-items: flex-end;
+                gap: 6px;
+            }
+            #guide-panel {
+                bottom: 84px;
+                left: 20px;
+                right: 20px;
+                max-width: calc(100% - 40px);
+            }
+            #controls-panel {
+                bottom: 20px;
+                right: 20px;
+                left: 20px;
+                justify-content: space-between;
+            }
+            .luxury-btn {
+                padding: 10px 16px;
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D WebGL Canvas Viewport -->
+    <div id="canvas-container"></div>
+
+    <!-- Fullscreen Mirrored Webcam Background -->
+    <div id="video-container">
+        <video id="input-video" playsinline muted autoplay></video>
+        <div id="video-overlay-gradient"></div>
+    </div>
+
+    <!-- UI: Serif Title (Top-Left) -->
+    <header id="header-ui">
+        <div class="title-serif">
+            <span class="title-dot"></span>
+            Aether Sphere
+        </div>
+        <div class="subtitle">3,000 Neural Particles &bull; Spatial Gesture Control</div>
+    </header>
+
+    <!-- UI: Live Tracking HUD (Top-Right) -->
+    <aside id="status-hud">
+        <div class="hud-pill" id="hand-status-pill">
+            <span class="status-indicator" id="cam-indicator"></span>
+            <span id="cam-status-text">Initializing Camera...</span>
+        </div>
+        <div class="hud-pill" id="gesture-pill">
+            <span id="active-gesture-text">Mode: Neutral Flow</span>
+        </div>
+    </aside>
+
+    <!-- Interactive Pinch Energy Ring -->
+    <div id="charge-ring-container">
+        <svg class="charge-svg" viewBox="0 0 140 140">
+            <circle class="charge-track" cx="70" cy="70" r="60"></circle>
+            <circle class="charge-bar" cx="70" cy="70" r="60"></circle>
+        </svg>
+        <div class="charge-label" id="charge-percentage">0%</div>
+    </div>
+
+    <!-- Interactive Gesture Guide (Bottom-Left) -->
+    <section id="guide-panel">
+        <div class="guide-box" id="guide-box">
+            <div class="guide-header" id="guide-header">
+                <h3>Gesture Matrix</h3>
+                <span class="guide-toggle-icon">&#9662;</span>
+            </div>
+            <div class="guide-list">
+                <div class="guide-item">
+                    <span class="guide-badge">Single Hand</span>
+                    <span>Directs 3D spatial orbit &amp; tilt rotation</span>
+                </div>
+                <div class="guide-item">
+                    <span class="guide-badge">Pinch &amp; Hold</span>
+                    <span>Charges dynamic plasma ring (release to explode)</span>
+                </div>
+                <div class="guide-item">
+                    <span class="guide-badge">Two Hands</span>
+                    <span>Spread apart to expand sphere, converge to compress</span>
+                </div>
+                <div class="guide-item">
+                    <span class="guide-badge">Finger Count</span>
+                    <span>0: Crimson &bull; 1: Cyan &bull; 2: Emerald &bull; 3: Amber &bull; 4: Violet &bull; 5: Aurora</span>
+                </div>
+                <div class="guide-item">
+                    <span class="guide-badge">Fallback</span>
+                    <span>Click &amp; drag anywhere or use mouse wheel</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Controls Panel (Bottom-Right) -->
+    <footer id="controls-panel">
+        <button id="toggle-audio" class="luxury-btn" title="Toggle Synthesized Audio Feedback">
+            <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            <span id="audio-btn-text">Audio: Off</span>
+        </button>
+        <button id="toggle-bg" class="luxury-btn">
+            <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
+            <span id="bg-btn-text">Webcam Backdrop</span>
+        </button>
+    </footer>
+
+    <!-- Notification Toast -->
+    <div id="notification-toast">Camera feed loaded. Raise hand to interact!</div>
+
+    <script>
+        /**
+         * =========================================================================
+         * 1. GLOBAL CONSTANTS & PALETTES
+         * =========================================================================
+         */
+        const PARTICLE_COUNT = 3000;
+        const BASE_SPHERE_RADIUS = 2.1;
+        const EXPLOSION_POWER = 22;
+        const PINCH_TRIGGER_DIST = 0.055;
+        const SMOOTH_LERP = 0.085;       // Smooth position/rotation damping
+        const SCALE_LERP = 0.075;        // Smooth scale damping
+        const COLOR_LERP = 0.05;         // Smooth chromatic morphing
+
+        // Curated Radiant Color Palettes mapped to extended finger counts (0 through 5)
+        const FINGER_COLOR_PALETTE = [
+            { name: "Supernova Crimson", hex: 0xff1e56, r: 1.0, g: 0.12, b: 0.34 }, // 0 fingers (fist)
+            { name: "Electric Cyan",     hex: 0x00f0ff, r: 0.0, g: 0.94, b: 1.0  }, // 1 finger
+            { name: "Emerald Matrix",    hex: 0x00ff88, r: 0.0, g: 1.0,  b: 0.53 }, // 2 fingers
+            { name: "Solar Amber",       hex: 0xffb703, r: 1.0, g: 0.72, b: 0.01 }, // 3 fingers
+            { name: "Amethyst Violet",   hex: 0xaa00ff, r: 0.67, g: 0.0, b: 1.0  }, // 4 fingers
+            { name: "Prismatic Aurora",  hex: 0xf1f5f9, r: 0.95, g: 0.96, b: 0.98 }  // 5 fingers (open palm)
+        ];
+
+        /**
+         * =========================================================================
+         * 2. APPLICATION STATE
+         * =========================================================================
+         */
+        const state = {
+            // Transform targets (interpolated smoothly)
+            currentPos: new THREE.Vector3(0, 0, 0),
+            targetPos: new THREE.Vector3(0, 0, 0),
+            
+            currentRot: new THREE.Euler(0, 0, 0),
+            targetRot: new THREE.Euler(0, 0, 0),
+            
+            currentScale: 1.0,
+            targetScale: 1.0,
+            
+            // Chromatic states
+            currentColor: new THREE.Color(0x00f0ff),
+            targetColor: new THREE.Color(0x00f0ff),
+            activeFingerCount: 1,
+
+            // Pinch & Explosion
+            isPinching: false,
+            pinchScreenPos: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+            chargeLevel: 0.0,
+            isExploded: false,
+            explosionTime: 0,
+
+            // Tracking info
+            handsDetected: 0,
+            isCameraActive: false,
+            audioEnabled: false
+        };
+
+        /**
+         * =========================================================================
+         * 3. PROCEDURAL PARTICLE GLOW TEXTURE GENERATOR
+         * Creates a soft, circular, shimmering radial sprite without external image files
+         * =========================================================================
+         */
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0.0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.25, 'rgba(255, 255, 255, 0.85)');
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.35)');
+            gradient.addColorStop(1.0, 'rgba(255, 255, 255, 0)');
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 64, 64);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        /**
+         * =========================================================================
+         * 4. THREE.JS SCENE, CAMERA & PARTICLE SYSTEM
+         * =========================================================================
+         */
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5.2;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // Particle Buffers
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const homePositions = new Float32Array(PARTICLE_COUNT * 3);
+        const velocities = new Float32Array(PARTICLE_COUNT * 3);
+        const randomOffsets = new Float32Array(PARTICLE_COUNT * 3); // For charge agitation / trembling
+
+        // Distribute 3000 points evenly across a 3D sphere using the Golden Ratio spiral
+        const phiRatio = Math.PI * (3 - Math.sqrt(5)); // Golden angle ~2.39996 rads
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const y = 1 - (i / (PARTICLE_COUNT - 1)) * 2; // y ranges from 1 to -1
+            const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y));
+            const theta = phiRatio * i;
+
+            // Slight organic radial perturbation
+            const variance = 0.92 + Math.random() * 0.16;
+            const px = Math.cos(theta) * radiusAtY * BASE_SPHERE_RADIUS * variance;
+            const py = y * BASE_SPHERE_RADIUS * variance;
+            const pz = Math.sin(theta) * radiusAtY * BASE_SPHERE_RADIUS * variance;
+
+            const i3 = i * 3;
+            positions[i3] = px;
+            positions[i3 + 1] = py;
+            positions[i3 + 2] = pz;
+
+            homePositions[i3] = px;
+            homePositions[i3 + 1] = py;
+            homePositions[i3 + 2] = pz;
+
+            velocities[i3] = 0;
+            velocities[i3 + 1] = 0;
+            velocities[i3 + 2] = 0;
+
+            randomOffsets[i3] = (Math.random() - 0.5);
+            randomOffsets[i3 + 1] = (Math.random() - 0.5);
+            randomOffsets[i3 + 2] = (Math.random() - 0.5);
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+        const particleMaterial = new THREE.PointsMaterial({
+            size: 0.055,
+            map: createParticleTexture(),
+            color: state.currentColor,
+            transparent: true,
+            opacity: 0.88,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particleSphere = new THREE.Points(geometry, particleMaterial);
+        scene.add(particleSphere);
+
+        // Core Ambient Light
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        /**
+         * =========================================================================
+         * 5. PROCEDURAL WEB AUDIO SYNTHESIZER (Sci-Fi Audio Feedback)
+         * =========================================================================
+         */
+        let audioCtx = null;
+        let chargeOscillator = null;
+        let chargeGain = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playTone(freq, duration, type = 'sine', gainVal = 0.1) {
+            if (!state.audioEnabled || !audioCtx) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(gainVal, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        }
+
+        function updateChargeAudio(level) {
+            if (!state.audioEnabled || !audioCtx) return;
+            try {
+                if (level > 0.05) {
+                    if (!chargeOscillator) {
+                        chargeOscillator = audioCtx.createOscillator();
+                        chargeGain = audioCtx.createGain();
+                        chargeOscillator.type = 'sawtooth';
+                        chargeGain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+                        chargeOscillator.connect(chargeGain);
+                        chargeGain.connect(audioCtx.destination);
+                        chargeOscillator.start();
+                    }
+                    const freq = 180 + Math.pow(level, 2) * 620;
+                    chargeOscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.05);
+                    chargeGain.gain.setTargetAtTime(Math.min(0.06, level * 0.06), audioCtx.currentTime, 0.05);
+                } else if (chargeOscillator) {
+                    chargeGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.05);
+                    setTimeout(() => {
+                        if (chargeOscillator && state.chargeLevel <= 0.05) {
+                            chargeOscillator.stop();
+                            chargeOscillator.disconnect();
+                            chargeOscillator = null;
+                        }
+                    }, 100);
+                }
+            } catch(e) {}
+        }
+
+        function playExplosionSound() {
+            if (!state.audioEnabled || !audioCtx) return;
+            try {
+                // Low boom
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(140, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(35, audioCtx.currentTime + 0.8);
+                gain.gain.setValueAtTime(0.28, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 1.2);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 1.2);
+            } catch(e) {}
+        }
+
+        /**
+         * =========================================================================
+         * 6. MEDIAPIPE GESTURE DETECTION & PROCESSING
+         * =========================================================================
+         */
+        const videoElement = document.getElementById('input-video');
+        const camIndicator = document.getElementById('cam-indicator');
+        const camStatusText = document.getElementById('cam-status-text');
+        const activeGestureText = document.getElementById('active-gesture-text');
+        const chargeRing = document.getElementById('charge-ring-container');
+        const chargeBar = document.querySelector('.charge-bar');
+        const chargePercentage = document.getElementById('charge-percentage');
+        const toast = document.getElementById('notification-toast');
+
+        function showToast(msg, duration = 3000) {
+            toast.textContent = msg;
+            toast.classList.add('visible');
+            setTimeout(() => toast.classList.remove('visible'), duration);
+        }
+
+        // Euclidean 2D distance between landmarks
+        function distance2D(p1, p2) {
+            const dx = p1.x - p2.x;
+            const dy = p1.y - p2.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // Robust Extended Finger Counter (Works at any hand orientation)
+        function calculateFingerCount(hand) {
+            const wrist = hand[0];
+            let extendedCount = 0;
+
+            // Fingers: Index (8), Middle (12), Ring (16), Pinky (20)
+            // Compare distance from wrist to tip vs wrist to PIP joint
+            const fingers = [
+                { tip: 8, pip: 6 },
+                { tip: 12, pip: 10 },
+                { tip: 16, pip: 14 },
+                { tip: 20, pip: 18 }
+            ];
+
+            fingers.forEach(f => {
+                const distTip = distance2D(wrist, hand[f.tip]);
+                const distPip = distance2D(wrist, hand[f.pip]);
+                if (distTip > distPip * 1.18) {
+                    extendedCount++;
+                }
+            });
+
+            // Thumb calculation: check angle and distance from pinky MCP (17)
+            const thumbTipDist = distance2D(hand[4], hand[17]);
+            const thumbIPDist = distance2D(hand[3], hand[17]);
+            if (thumbTipDist > thumbIPDist * 1.15) {
+                extendedCount++;
+            }
+
+            return Math.min(5, Math.max(0, extendedCount));
+        }
+
+        // Explode Particle System
+        function triggerParticleExplosion() {
+            state.isExploded = true;
+            state.explosionTime = performance.now();
+            state.chargeLevel = 0.0;
+            updateChargeRingUI();
+            playExplosionSound();
+
+            const posAttr = geometry.attributes.position;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const px = posAttr.array[i3];
+                const py = posAttr.array[i3 + 1];
+                const pz = posAttr.array[i3 + 2];
+
+                // Spherical normal unit vector from center
+                const len = Math.sqrt(px * px + py * py + pz * pz) || 1;
+                const nx = px / len;
+                const ny = py / len;
+                const nz = pz / len;
+
+                // Random chaotic outward burst
+                const speed = (0.6 + Math.random() * 0.9) * EXPLOSION_POWER;
+                const chaos = 0.35;
+                velocities[i3]     = (nx + (Math.random() - 0.5) * chaos) * speed;
+                velocities[i3 + 1] = (ny + (Math.random() - 0.5) * chaos) * speed;
+                velocities[i3 + 2] = (nz + (Math.random() - 0.5) * chaos) * speed;
+            }
+        }
+
+        // Dynamic Charge Ring UI Update
+        function updateChargeRingUI() {
+            const circumference = 377; // 2 * PI * 60
+            const offset = circumference - (state.chargeLevel * circumference);
+            chargeBar.style.strokeDashoffset = offset;
+            chargePercentage.textContent = Math.round(state.chargeLevel * 100) + '%';
+
+            if (state.chargeLevel > 0.01) {
+                chargeRing.style.opacity = '1';
+                chargeRing.style.transform = `translate(-50%, -50%) scale(${0.9 + state.chargeLevel * 0.25})`;
+            } else {
+                chargeRing.style.opacity = '0';
+                chargeRing.style.transform = 'translate(-50%, -50%) scale(0.9)';
+            }
+
+            updateChargeAudio(state.chargeLevel);
+        }
+
+        // Main MediaPipe Landmark Processor
+        function onHandResults(results) {
+            const hands = results.multiHandLandmarks;
+
+            if (!hands || hands.length === 0) {
+                state.handsDetected = 0;
+                camIndicator.className = 'status-indicator ready';
+                camStatusText.textContent = 'Camera Ready (Show Hands)';
+                activeGestureText.textContent = 'Mode: Neutral Orbit';
+
+                // Decay charge if hand lost
+                if (state.chargeLevel > 0) {
+                    state.chargeLevel = Math.max(0, state.chargeLevel - 0.05);
+                    updateChargeRingUI();
+                }
+                state.isPinching = false;
+                return;
+            }
+
+            state.handsDetected = hands.length;
+            camIndicator.className = 'status-indicator tracking';
+            camStatusText.textContent = `${hands.length} Hand${hands.length > 1 ? 's' : ''} Detected`;
+
+            // =========================================================================
+            // SINGLE HAND LOGIC (Move, Rotate, Pinch, Finger Count)
+            // =========================================================================
+            if (hands.length === 1) {
+                const hand = hands[0];
+
+                // Palm Centroid
+                let cx = 0, cy = 0;
+                for (let i = 0; i < 21; i++) {
+                    cx += hand[i].x;
+                    cy += hand[i].y;
+                }
+                cx /= 21;
+                cy /= 21;
+
+                // Smooth 3D Mapping (Invert X because camera is mirrored)
+                state.targetPos.x = (1.0 - cx - 0.5) * 6.5;
+                state.targetPos.y = (0.5 - cy) * 4.6;
+                state.targetPos.z = 0;
+
+                // Hand Tilt to Sphere Rotation
+                state.targetRot.y = (1.0 - cx - 0.5) * Math.PI * 1.8;
+                state.targetRot.x = (cy - 0.5) * Math.PI * 1.5;
+
+                // Pinch Detection (Thumb Tip 4 to Index Tip 8)
+                const pinchDist = distance2D(hand[4], hand[8]);
+                const pinchPixelX = (1.0 - ((hand[4].x + hand[8].x) / 2)) * window.innerWidth;
+                const pinchPixelY = ((hand[4].y + hand[8].y) / 2) * window.innerHeight;
+
+                // Position charge ring over pinch location
+                chargeRing.style.left = pinchPixelX + 'px';
+                chargeRing.style.top = pinchPixelY + 'px';
+
+                if (pinchDist < PINCH_TRIGGER_DIST) {
+                    state.isPinching = true;
+                    state.chargeLevel = Math.min(1.0, state.chargeLevel + 0.024);
+                    activeGestureText.textContent = `Pinch Charging: ${Math.round(state.chargeLevel * 100)}%`;
+                } else {
+                    // Explode upon releasing full charge!
+                    if (state.isPinching && state.chargeLevel >= 0.85) {
+                        triggerParticleExplosion();
+                        activeGestureText.textContent = 'Shockwave Discharged!';
+                    } else {
+                        activeGestureText.textContent = 'Mode: Hand Tracking';
+                    }
+                    state.isPinching = false;
+                    state.chargeLevel = Math.max(0, state.chargeLevel - 0.04);
+                }
+
+                // Finger Count for Color Shifting
+                const count = calculateFingerCount(hand);
+                if (count !== state.activeFingerCount) {
+                    state.activeFingerCount = count;
+                    const palette = FINGER_COLOR_PALETTE[count];
+                    state.targetColor.setHex(palette.hex);
+                    playTone(320 + count * 90, 0.15, 'triangle', 0.04);
+                }
+
+                activeGestureText.textContent = state.isPinching 
+                    ? `Charging ${Math.round(state.chargeLevel * 100)}%`
+                    : `${count} Fingers: ${FINGER_COLOR_PALETTE[count].name}`;
+
+                updateChargeRingUI();
+            }
+
+            // =========================================================================
+            // TWO HANDS LOGIC (Scale Growth & Shrink)
+            // =========================================================================
+            if (hands.length >= 2) {
+                const h1 = hands[0];
+                const h2 = hands[1];
+
+                const c1 = { x: (h1[0].x + h1[9].x) / 2, y: (h1[0].y + h1[9].y) / 2 };
+                const c2 = { x: (h2[0].x + h2[9].x) / 2, y: (h2[0].y + h2[9].y) / 2 };
+
+                // Inter-hand Distance
+                const handsDistance = distance2D(c1, c2);
+
+                // Map distance to sphere scale (Range: 0.4x to 3.5x)
+                state.targetScale = Math.min(3.5, Math.max(0.4, 0.4 + handsDistance * 3.6));
+
+                // Position sphere between both hands
+                const midX = (c1.x + c2.x) / 2;
+                const midY = (c1.y + c2.y) / 2;
+                state.targetPos.x = (1.0 - midX - 0.5) * 6.5;
+                state.targetPos.y = (0.5 - midY) * 4.6;
+
+                // Two hand rotation angle (like holding a steering orb)
+                const angle = Math.atan2(c2.y - c1.y, (1.0 - c2.x) - (1.0 - c1.x));
+                state.targetRot.z = angle * 0.8;
+
+                activeGestureText.textContent = `Dual Hands: Scale ${state.targetScale.toFixed(2)}x`;
+                state.chargeLevel = Math.max(0, state.chargeLevel - 0.05);
+                updateChargeRingUI();
+            }
+        }
+
+        /**
+         * =========================================================================
+         * 7. MEDIAPIPE INITIALIZATION WITH ERROR HANDLING
+         * =========================================================================
+         */
+        async function startMediaPipe() {
+            try {
+                if (typeof Hands === 'undefined') {
+                    throw new Error("MediaPipe Hands library not loaded.");
+                }
+
+                const hands = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+
+                hands.setOptions({
+                    maxNumHands: 2,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.55,
+                    minTrackingConfidence: 0.55
+                });
+
+                hands.onResults(onHandResults);
+
+                const cameraUtils = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 1280,
+                    height: 720
+                });
+
+                await cameraUtils.start();
+                state.isCameraActive = true;
+                camIndicator.className = 'status-indicator ready';
+                camStatusText.textContent = 'Camera Ready';
+                showToast("Webcam connected! Show your hand to the camera.", 4000);
+            } catch (err) {
+                console.warn("Camera/MediaPipe auto-start notice:", err);
+                camIndicator.className = 'status-indicator';
+                camStatusText.textContent = 'Interactive Mouse Mode';
+                activeGestureText.textContent = 'Click & Drag to Orbit';
+                showToast("Webcam inactive. Interactive mouse & touch control enabled!", 5000);
+            }
+        }
+
+        /**
+         * =========================================================================
+         * 8. INTERACTIVE FALLBACK (Mouse & Touch gestures for testing without camera)
+         * =========================================================================
+         */
+        let isMouseDown = false;
+        let mouseStart = { x: 0, y: 0 };
+        let holdTimer = null;
+
+        window.addEventListener('pointerdown', (e) => {
+            // Ignore if clicking UI buttons
+            if (e.target.closest('#controls-panel') || e.target.closest('#guide-panel')) return;
+            isMouseDown = true;
+            mouseStart = { x: e.clientX, y: e.clientY };
+
+            // Press and hold simulates pinch charge
+            holdTimer = setTimeout(() => {
+                if (isMouseDown) {
+                    state.isPinching = true;
+                    const interval = setInterval(() => {
+                        if (isMouseDown) {
+                            state.chargeLevel = Math.min(1.0, state.chargeLevel + 0.035);
+                            chargeRing.style.left = e.clientX + 'px';
+                            chargeRing.style.top = e.clientY + 'px';
+                            updateChargeRingUI();
+                            if (state.chargeLevel >= 1.0) clearInterval(interval);
+                        } else {
+                            clearInterval(interval);
+                        }
+                    }, 30);
+                }
+            }, 250);
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (state.handsDetected === 0) {
+                // Interactive mouse control when hands aren't active
+                const nx = (e.clientX / window.innerWidth - 0.5) * 2;
+                const ny = (e.clientY / window.innerHeight - 0.5) * 2;
+
+                if (isMouseDown) {
+                    state.targetRot.y = nx * Math.PI;
+                    state.targetRot.x = ny * Math.PI;
+                } else {
+                    state.targetPos.x = nx * 2.8;
+                    state.targetPos.y = -ny * 2.0;
+                }
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            clearTimeout(holdTimer);
+            if (state.isPinching) {
+                if (state.chargeLevel >= 0.75) {
+                    triggerParticleExplosion();
+                }
+                state.isPinching = false;
+                state.chargeLevel = 0.0;
+                updateChargeRingUI();
+            }
+            isMouseDown = false;
+        });
+
+        window.addEventListener('wheel', (e) => {
+            if (state.handsDetected === 0) {
+                const delta = e.deltaY * -0.0015;
+                state.targetScale = Math.min(3.5, Math.max(0.4, state.targetScale + delta));
+            }
+        }, { passive: true });
+
+        // Key shortcuts to test finger colors with numbers 0-5
+        window.addEventListener('keydown', (e) => {
+            const num = parseInt(e.key);
+            if (!isNaN(num) && num >= 0 && num <= 5) {
+                state.activeFingerCount = num;
+                state.targetColor.setHex(FINGER_COLOR_PALETTE[num].hex);
+                activeGestureText.textContent = `${num} Fingers: ${FINGER_COLOR_PALETTE[num].name}`;
+                playTone(320 + num * 90, 0.15, 'triangle', 0.04);
+            }
+        });
+
+        /**
+         * =========================================================================
+         * 9. MAIN ANIMATION & SMOOTH PHYSICS LOOP
+         * =========================================================================
+         */
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+            const elapsed = clock.getElapsedTime();
+
+            // 1. Exponential Smoothing on Sphere Transform
+            state.currentPos.lerp(state.targetPos, SMOOTH_LERP);
+            state.currentScale += (state.targetScale - state.currentScale) * SCALE_LERP;
+
+            state.currentRot.x += (state.targetRot.x - state.currentRot.x) * SMOOTH_LERP;
+            state.currentRot.y += (state.targetRot.y - state.currentRot.y) * SMOOTH_LERP;
+            state.currentRot.z += (state.targetRot.z - state.currentRot.z) * SMOOTH_LERP;
+
+            // Chromatic Morphing
+            state.currentColor.lerp(state.targetColor, COLOR_LERP);
+            particleMaterial.color.copy(state.currentColor);
+
+            // Subtle continuous ethereal idle rotation
+            const idleRot = elapsed * 0.18;
+            particleSphere.rotation.x = state.currentRot.x;
+            particleSphere.rotation.y = state.currentRot.y + idleRot;
+            particleSphere.rotation.z = state.currentRot.z;
+
+            particleSphere.position.copy(state.currentPos);
+
+            // 2. Physics & Particle Simulation
+            const posAttr = geometry.attributes.position;
+            const isCharging = state.chargeLevel > 0.05;
+            const chargeJitter = Math.pow(state.chargeLevel, 2) * 0.12;
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const homeX = homePositions[i3] * state.currentScale;
+                const homeY = homePositions[i3 + 1] * state.currentScale;
+                const homeZ = homePositions[i3 + 2] * state.currentScale;
+
+                if (state.isExploded) {
+                    // Update positions with velocities
+                    posAttr.array[i3]     += velocities[i3] * delta * 2.5;
+                    posAttr.array[i3 + 1] += velocities[i3 + 1] * delta * 2.5;
+                    posAttr.array[i3 + 2] += velocities[i3 + 2] * delta * 2.5;
+
+                    // Aerodynamic drag
+                    velocities[i3]     *= 0.945;
+                    velocities[i3 + 1] *= 0.945;
+                    velocities[i3 + 2] *= 0.945;
+
+                    // Gravitational Spring Attraction back to home sphere
+                    const spring = 0.055;
+                    posAttr.array[i3]     += (homeX - posAttr.array[i3]) * spring;
+                    posAttr.array[i3 + 1] += (homeY - posAttr.array[i3 + 1]) * spring;
+                    posAttr.array[i3 + 2] += (homeZ - posAttr.array[i3 + 2]) * spring;
+                } else if (isCharging) {
+                    // While charging: particles contract slightly and vibrate with electric agitation
+                    const contraction = 1.0 - (state.chargeLevel * 0.18);
+                    const jitX = randomOffsets[i3] * chargeJitter;
+                    const jitY = randomOffsets[i3 + 1] * chargeJitter;
+                    const jitZ = randomOffsets[i3 + 2] * chargeJitter;
+
+                    posAttr.array[i3]     += (homeX * contraction + jitX - posAttr.array[i3]) * 0.2;
+                    posAttr.array[i3 + 1] += (homeY * contraction + jitY - posAttr.array[i3 + 1]) * 0.2;
+                    posAttr.array[i3 + 2] += (homeZ * contraction + jitZ - posAttr.array[i3 + 2]) * 0.2;
+                } else {
+                    // Smooth lerp to scaled home position with gentle organic breathing
+                    const breathe = 1.0 + Math.sin(elapsed * 2.0 + i * 0.05) * 0.015;
+                    const targetX = homeX * breathe;
+                    const targetY = homeY * breathe;
+                    const targetZ = homeZ * breathe;
+
+                    posAttr.array[i3]     += (targetX - posAttr.array[i3]) * 0.12;
+                    posAttr.array[i3 + 1] += (targetY - posAttr.array[i3 + 1]) * 0.12;
+                    posAttr.array[i3 + 2] += (targetZ - posAttr.array[i3 + 2]) * 0.12;
+                }
+            }
+
+            // Check if explosion has settled
+            if (state.isExploded) {
+                const timeSinceExplosion = (performance.now() - state.explosionTime) / 1000;
+                if (timeSinceExplosion > 1.8) {
+                    state.isExploded = false;
+                }
+            }
+
+            posAttr.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+
+        /**
+         * =========================================================================
+         * 10. UI CONTROLS & LISTENERS
+         * =========================================================================
+         */
+        const toggleBgBtn = document.getElementById('toggle-bg');
+        const videoContainer = document.getElementById('video-container');
+        const bgBtnText = document.getElementById('bg-btn-text');
+
+        toggleBgBtn.addEventListener('click', () => {
+            initAudio();
+            videoContainer.classList.toggle('active');
+            const isActive = videoContainer.classList.contains('active');
+            toggleBgBtn.classList.toggle('active', isActive);
+            bgBtnText.textContent = isActive ? "Backdrop: Active" : "Webcam Backdrop";
+            playTone(440, 0.12, 'sine', 0.05);
+        });
+
+        const toggleAudioBtn = document.getElementById('toggle-audio');
+        const audioBtnText = document.getElementById('audio-btn-text');
+        toggleAudioBtn.addEventListener('click', () => {
+            initAudio();
+            state.audioEnabled = !state.audioEnabled;
+            toggleAudioBtn.classList.toggle('active', state.audioEnabled);
+            audioBtnText.textContent = state.audioEnabled ? "Audio: On" : "Audio: Off";
+            if (state.audioEnabled) playTone(580, 0.2, 'sine', 0.06);
+        });
+
+        // Guide Panel collapse/expand
+        const guideBox = document.getElementById('guide-box');
+        const guideHeader = document.getElementById('guide-header');
+        guideHeader.addEventListener('click', () => {
+            guideBox.classList.toggle('collapsed');
+        });
+
+        // Responsive Resizing Handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        });
+
+        // Launch Application
+        animate();
+        startMediaPipe();
+    </script>
+</body>
+</html>
